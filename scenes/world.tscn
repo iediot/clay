@@ -1,0 +1,17 @@
+[gd_scene format=3 uid="uid://csn5e5ta0ybbs"]
+
+[ext_resource type="PackedScene" uid="uid://dd737cuj3iggr" path="res://scenes/ground.tscn" id="1_rwgxs"]
+[ext_resource type="PackedScene" uid="uid://kohq2it7di3g" path="res://scenes/player.tscn" id="2_4wyf3"]
+
+[node name="World" type="Node3D" unique_id=862031428]
+
+[node name="Ground" parent="." unique_id=1122294292 instance=ExtResource("1_rwgxs")]
+
+[node name="Player" parent="." unique_id=1497994973 instance=ExtResource("2_4wyf3")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.3554741, 0)
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="." unique_id=2037027662]
+
+[node name="Camera3D" type="Camera3D" parent="." unique_id=1016504246]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2, 10)
+visible = false
