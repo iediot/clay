@@ -1,15 +1,33 @@
 [gd_scene format=3 uid="uid://dd737cuj3iggr"]
 
-[sub_resource type="BoxShape3D" id="BoxShape3D_681ao"]
-size = Vector3(20, 1, 5)
+[ext_resource type="PackedScene" uid="uid://ce4j11b58mljn" path="res://assets/GrassBlock.glb" id="1_pybca"]
+[ext_resource type="PackedScene" uid="uid://banm6x4tab7mx" path="res://assets/DirtBlock.glb" id="2_mi8v4"]
 
-[sub_resource type="BoxMesh" id="BoxMesh_681ao"]
-size = Vector3(20, 1, 5)
+[sub_resource type="BoxShape3D" id="BoxShape3D_hbf41"]
+size = Vector3(1, 0.9663086, 1)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_tqqpm"]
+size = Vector3(0.7889404, 1, 1)
 
 [node name="Ground" type="StaticBody3D" unique_id=1122294292]
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="." unique_id=1137599686]
-shape = SubResource("BoxShape3D_681ao")
+[node name="GrassBlock2" parent="." unique_id=187134578 instance=ExtResource("1_pybca")]
+transform = Transform3D(-0.111533836, 0, 0.99376065, 0, 1, 0, -0.99376065, 0, -0.111533836, -0.21125233, -0.25970185, -1.1309314)
 
-[node name="MeshInstance3D" type="MeshInstance3D" parent="." unique_id=842229317]
-mesh = SubResource("BoxMesh_681ao")
+[node name="CollisionShape3D" type="CollisionShape3D" parent="GrassBlock2" unique_id=843839636]
+transform = Transform3D(2.1000004, 0, -1.1473894e-06, 0, 2.2, 0, 1.1473894e-06, 0, 2.1000004, 0.13683224, 0.5578311, -0.1791671)
+shape = SubResource("BoxShape3D_hbf41")
+
+[node name="DirtBlock" parent="." unique_id=703474650 instance=ExtResource("2_mi8v4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2.960043, 0, -0.4931823)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="DirtBlock" unique_id=1640975083]
+transform = Transform3D(2.5, 0, 0, 0, 2, 0, 0, 0, 2, 0.13404942, 0.5121051, -0.1689353)
+shape = SubResource("BoxShape3D_tqqpm")
+
+[node name="GrassBlock3" parent="." unique_id=1820048290 instance=ExtResource("1_pybca")]
+transform = Transform3D(-0.111533836, 0, 0.99376065, 0, 1, 0, -0.99376065, 0, -0.111533836, -0.21125233, -0.25970185, -1.1309314)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="GrassBlock3" unique_id=1671487706]
+transform = Transform3D(2.1000004, 0, -1.1473894e-06, 0, 2.2, 0, 1.1473894e-06, 0, 2.1000004, 0.13683224, 0.5578311, -0.1791671)
+shape = SubResource("BoxShape3D_hbf41")
