@@ -10,9 +10,18 @@ const MAP_V := 24
 @export var face_lead_angle: float = 0.45
 @export var face_lead_speed: float = 6.0
 @export var face_idle_delay: float = 1.0
-@export var face_return_time: float = 0.18
+@export var face_return_time: float = 0.9
+@export var face_rest_span: float = 0.3
 @export var face_clearance: float = 0.02
 @export var face_lift_speed: float = 4.0
+@export var fingerprint_size: float = 69.4
+@export var fingerprint_relief: float = 16.0
+@export var land_ref_speed: float = 11.0
+@export var land_dent_max: float = 0.26
+@export var land_bulge: float = 0.8
+@export var land_knead_contact: float = 4.5
+@export var land_round_max: float = 0.55
+@export var land_round_length: float = 90.0
 
 @onready var _model: Node3D = $PlayerModel
 
@@ -37,6 +46,11 @@ var _face_dir := Vector3.FORWARD
 var _lift := 0.0
 var _pen_home := 0.0
 
+var _celldir: PackedVector3Array
+var _deform: ClayDeform
+var _air := 0.0
+var _contact := Vector3.DOWN
+
 func _ready() -> void:
 	_m = _model.transform
 	_m_inv = _m.affine_inverse()
@@ -46,6 +60,7 @@ func _ready() -> void:
 	_build_surface_map()
 	_pen_home = _penetration(Basis.IDENTITY, Vector3.ZERO, 0.0)
 	_prev_pos = global_position
+	_setup_deform()
 
 func _physics_process(delta: float) -> void:
 	if not is_on_floor():
@@ -58,8 +73,40 @@ func _physics_process(delta: float) -> void:
 	velocity.x = direction * SPEED
 	velocity.z = 0.0
 
+	var was_floor := is_on_floor()
+	var fall := -velocity.y
 	move_and_slide()
+
+	if is_on_floor():
+		_contact = -get_floor_normal()
+		# Only a real air-to-floor transition counts, so jump input and brief
+		# contact flicker on the generated terrain never trigger a landing.
+		if not was_floor and _air > 0.08:
+			_deform.land(_contact, _body_off, fall)
+		_air = 0.0
+	else:
+		_air += delta
+
 	_spin(delta, direction)
+	_deform.update(global_transform * _pivot, _body_off, _contact)
+
+func _setup_deform() -> void:
+	var acc := 0.0
+	var cnt := 0
+	for r in _radmap:
+		if r > 0.0:
+			acc += r
+			cnt += 1
+	_deform = ClayDeform.new()
+	_deform.fingerprint_size = fingerprint_size
+	_deform.fingerprint_relief = fingerprint_relief
+	_deform.ref_speed = land_ref_speed
+	_deform.dent_max = land_dent_max
+	_deform.bulge_gain = land_bulge
+	_deform.knead_contact = land_knead_contact
+	_deform.round_max = land_round_max
+	_deform.round_length = land_round_length
+	_deform.setup(_body + _face, _radmap, _celldir, acc / maxf(float(cnt), 1.0))
 
 func _spin(delta: float, direction: float) -> void:
 	var d := global_position - _prev_pos
@@ -79,11 +126,14 @@ func _spin(delta: float, direction: float) -> void:
 	else:
 		_idle += delta
 		if _idle >= face_idle_delay:
+			# Rest is a band, not a point: the face settles on whichever end of it
+			# it is nearest, so it keeps facing the way it last travelled.
+			var rest := clampf(_lead, -face_rest_span, face_rest_span)
 			var w := clampf(delta / maxf(face_return_time, 0.0001), 0.0, 1.0)
 			_face_roll = Basis(Quaternion(_face_roll).slerp(Quaternion.IDENTITY, w)).orthonormalized()
-			_lead = lerpf(_lead, 0.0, w)
-			if absf(_lead) < 0.001 and Quaternion(_face_roll).get_angle() < 0.001:
-				_lead = 0.0
+			_lead = lerpf(_lead, rest, w)
+			if absf(_lead - rest) < 0.001 and Quaternion(_face_roll).get_angle() < 0.001:
+				_lead = rest
 				_face_roll = Basis.IDENTITY
 
 	var face_off := Basis(Vector3.UP, _lead) * _face_roll
@@ -93,6 +143,10 @@ func _spin(delta: float, direction: float) -> void:
 
 	_apply(_body, _body_off)
 	_apply(_face, face_off, (face_off * _face_dir).normalized() * _lift)
+
+	# Only clay actually pressed against the ground is remoulded, so a facet has
+	# to roll back through the contact patch to be worked out.
+	_deform.knead(d.length(), _body_off, _contact if is_on_floor() else Vector3.ZERO)
 
 # Rotate a group about the ball centre, working in Player space.
 func _apply(nodes: Array, off: Basis, push: Vector3 = Vector3.ZERO) -> void:
@@ -143,6 +197,15 @@ func _build_surface_map() -> void:
 					cnt += 1
 			if cnt > 0:
 				_radmap[i] = acc / cnt
+
+	_celldir = PackedVector3Array()
+	_celldir.resize(MAP_U * MAP_V)
+	for w in MAP_V:
+		var theta: float = (float(w) + 0.5) / MAP_V * PI
+		for u in MAP_U:
+			var phi: float = (float(u) + 0.5) / MAP_U * TAU - PI
+			_celldir[w * MAP_U + u] = Vector3(
+				sin(theta) * cos(phi), cos(theta), sin(theta) * sin(phi))
 
 	var acc_dir := Vector3.ZERO
 	_samples = PackedVector3Array()

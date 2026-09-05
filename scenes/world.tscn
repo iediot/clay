@@ -2,6 +2,7 @@
 
 [ext_resource type="PackedScene" uid="uid://kohq2it7di3g" path="res://scenes/player.tscn" id="2_4wyf3"]
 [ext_resource type="Script" uid="uid://dcjwmbvrwd6d6" path="res://scripts/terrain_generator.gd" id="2_rwgxs"]
+[ext_resource type="Script" path="res://scripts/camera_rig.gd" id="3_cmrig"]
 
 [sub_resource type="Environment" id="Environment_681ao"]
 ambient_light_source = 3
@@ -16,6 +17,7 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3, 0)
 
 [node name="Camera3D" type="Camera3D" parent="Player" unique_id=1016504246]
 transform = Transform3D(1, 0, 0, 0, 0.96591675, 0.25885308, 0, -0.25885308, 0.96591675, -2.372507, 8.932405, 17.710648)
+script = ExtResource("3_cmrig")
 
 [node name="DirectionalLight3D" type="DirectionalLight3D" parent="." unique_id=2037027662]
 transform = Transform3D(0.8278657, -0.22527663, 0.51370114, 0, 0.9158085, 0.40161532, -0.5609264, -0.33248356, 0.75816643, 8.481949, 8.859828, 13.939434)
