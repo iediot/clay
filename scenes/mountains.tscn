@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://cpnd56kcevywe"]
+
+[ext_resource type="Script" uid="uid://dwa0a3ui1kfjs" path="res://scripts/clay_mountains.gd" id="1_mtn"]
+
+[node name="Mountains" type="MeshInstance3D" unique_id=526127075]
+script = ExtResource("1_mtn")

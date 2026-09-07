@@ -37,9 +37,22 @@ extends MeshInstance3D
 @export_range(0.0, 1.0) var roughness: float = 0.9: set = _s25
 @export var fingerprint_normal: Texture2D = preload("res://assets/GrassBlock_imperfection_0002_normal_opengl_2k.png"): set = _s26
 
+@export_group("Backland")
+@export var backland_enabled: bool = false: set = _s29
+@export var backland_depth: float = 250.0: set = _s30
+@export var backland_width: float = 210.0: set = _s31
+@export var backland_floor: float = -40.0: set = _s32
+@export var rim_drop: float = 7.0: set = _s33
+@export var rim_overhang: float = 1.6: set = _s34
+@export var stream_enabled: bool = true: set = _s41
+@export var stream_depth: float = 3.4: set = _s42
+@export var stream_fill: float = 2.3: set = _s43
+@export var water_color: Color = Color(0.25, 0.58, 0.8): set = _s44
+
 @export_group("")
 @export_tool_button("Regenerate") var regen_button = generate
 
+var backland: ClayBackland
 var noise := FastNoiseLite.new()
 var edge_noise := FastNoiseLite.new()
 var drip_noise := FastNoiseLite.new()
@@ -73,6 +86,16 @@ func _s25(v): roughness = v; _dirty()
 func _s26(v): fingerprint_normal = v; _dirty()
 func _s27(v): triplanar = v; _dirty()
 func _s28(v): drip_min = v; _dirty()
+func _s29(v): backland_enabled = v; _dirty()
+func _s30(v): backland_depth = v; _dirty()
+func _s31(v): backland_width = v; _dirty()
+func _s32(v): backland_floor = v; _dirty()
+func _s33(v): rim_drop = v; _dirty()
+func _s34(v): rim_overhang = v; _dirty()
+func _s41(v): stream_enabled = v; _dirty()
+func _s42(v): stream_depth = v; _dirty()
+func _s43(v): stream_fill = v; _dirty()
+func _s44(v): water_color = v; _dirty()
 
 func _ready():
 	generate()
@@ -92,9 +115,90 @@ func _regen():
 	_queued = false
 	generate()
 
+# Grain, not a division count. Everything this slab has to resolve — the drip
+# lobes, the overhang, the height noise, the fingerprint tile — is fixed in
+# world units, so the cell has to be fixed in world units too. Spreading
+# `resolution` cells over the whole length instead made the mesh coarser the
+# longer the track got: the overhang went low-poly and the top surface banded.
+# `resolution` is the cell count across GRAIN_SPAN units, the length the current
+# look was authored at.
+const GRAIN_SPAN := 80.0
+
+# Arc-uniform samples along one half of an end cap. Only has to beat the grid,
+# which takes about 55 steps over the whole cap at the default grain.
+const CAP_SAMPLES := 128
+
+# One end cap, walked at equal arc from shoulder to tip to shoulder, and the
+# shape it was built for.
+var _cap_pts := PackedVector2Array()
+var _cap_arc := 0.0
+var _cap_key := Vector3.INF
+
+func cell_size() -> float:
+	return GRAIN_SPAN / float(maxi(4, resolution))
+
+# How deep each end cap reaches back along the slab. Tied to the half-width, so
+# the ends keep their shape and their share of the grid at any length.
+func _cap_depth() -> float:
+	return minf(size_z, size_x) * 0.5
+
+# Columns span the length, rows span an end cap, both at one cell. The cap's arc
+# does not depend on size_x, so neither does the row count: the ends are sampled
+# as finely on a 400-long track as on an 80-long one. Columns are counted over
+# the whole length, not just the straight run, because the middle rows reach
+# through the caps to the tips.
 func _grid_divs() -> Vector2i:
-	var cell: float = maxf(size_x, size_z) / float(maxi(4, resolution))
-	return Vector2i(maxi(4, int(ceil(size_x / cell))), maxi(4, int(ceil(size_z / cell))))
+	_build_cap()
+	var cell := cell_size()
+	return Vector2i(maxi(4, int(round(size_x / cell))), maxi(4, int(round(_cap_arc / cell))))
+
+# The cap is a superellipse quarter, and for a blunt one most of its length sits
+# in the shoulder. Walking it in x or in z would step straight over that, so it
+# is walked in the angle form and then resampled by arc.
+func _build_cap() -> void:
+	var key := Vector3(size_x, size_z, corner_sharpness)
+	if key.is_equal_approx(_cap_key) and not _cap_pts.is_empty():
+		return
+	_cap_key = key
+	var hz := size_z * 0.5
+	var cap := _cap_depth()
+	var e := maxf(corner_sharpness, 2.0)
+	var steps := 2048
+	var fine := PackedVector2Array()
+	var run := PackedFloat32Array()
+	var total := 0.0
+	for i in steps + 1:
+		var phi := PI * 0.5 * float(i) / float(steps)
+		var p := Vector2(cap * pow(cos(phi), 2.0 / e), hz * pow(sin(phi), 2.0 / e))
+		if i > 0:
+			total += p.distance_to(fine[i - 1])
+		fine.append(p)
+		run.append(total)
+	_cap_arc = total * 2.0
+
+	var half := PackedVector2Array()
+	var k := 0
+	for j in CAP_SAMPLES + 1:
+		var target: float = total * float(j) / float(CAP_SAMPLES)
+		while k < steps and run[k + 1] < target:
+			k += 1
+		var span: float = run[mini(k + 1, steps)] - run[k]
+		var f: float = 0.0 if span < 1e-9 else (target - run[k]) / span
+		half.append(fine[k].lerp(fine[mini(k + 1, steps)], f))
+
+	_cap_pts = PackedVector2Array()
+	for j in range(CAP_SAMPLES, 0, -1):
+		_cap_pts.append(Vector2(half[j].x, -half[j].y))
+	for j in CAP_SAMPLES + 1:
+		_cap_pts.append(half[j])
+
+# Point on one cap for t in [-1, 1]: a shoulder at -1, the tip at 0, the other
+# shoulder at +1, spaced evenly along the curve.
+func _cap_point(t: float) -> Vector2:
+	var last := _cap_pts.size() - 1
+	var f: float = clampf((t + 1.0) * 0.5, 0.0, 1.0) * float(last)
+	var i := mini(int(f), last - 1)
+	return _cap_pts[i].lerp(_cap_pts[i + 1], f - float(i))
 
 func generate():
 	noise.seed = noise_seed
@@ -116,29 +220,61 @@ func generate():
 	var am := ArrayMesh.new()
 	var ring := _build_grass(am)
 	_build_dirt(am, ring)
+
+	# Collision is the playable track only; the landform behind it is scenery.
+	var track := ArrayMesh.new()
+	for i in am.get_surface_count():
+		track.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, am.surface_get_arrays(i))
+
+	backland = null
+	if backland_enabled:
+		backland = ClayBackland.new(self)
+		backland.build(am)
 	mesh = am
 
 	if not Engine.is_editor_hint():
-		_build_collision()
+		_build_collision(track)
 
 func _height(x: float, z: float) -> float:
 	return noise.get_noise_2d(x, z) * height_scale
 
-# Hand-wobbled footprint. A superellipse is used rather than a rounded
-# rectangle: it has no tangent break, so the wobble cannot notch the outline.
-func _outline(dir: Vector2) -> Vector2:
-	var hx := size_x * 0.5
+# Hand-wobbled footprint, from a point on the unit square's edge: the square's
+# two end edges are the slab's end caps and its two long edges are the straight
+# sides. Written this way round because the grid is that square — the caps
+# always get the row budget and the sides the column budget, so neither can be
+# starved by the aspect ratio.
+#
+# The shape is a straight run closed by superellipse caps rather than one
+# superellipse over the whole slab. A single superellipse tapers over a fixed
+# *fraction* of the length, so a long track ended in a metre-long spike that no
+# fixed row count could describe; a cap is always the same size.
+func _outline(q: Vector2) -> Vector2:
+	_build_cap()
 	var hz := size_z * 0.5
+	var cap := _cap_depth()
+	var flat: float = size_x * 0.5 - cap
+	var p: Vector2
+	if absf(q.x) >= absf(q.y):
+		var c := _cap_point(q.y)
+		p = Vector2(signf(q.x) * (flat + c.x), c.y)
+	else:
+		p = Vector2(flat * q.x, hz * signf(q.y))
+	if edge_wobble == 0.0:
+		return p
+	return p + _edge_normal(p) * edge_noise.get_noise_2d(p.x, p.y) * edge_wobble
+
+# Outward normal of that footprint: the gradient of
+# (max(|x| - flat, 0) / cap)^e + (|z| / hz)^e = 1, which flattens to straight up
+# the side once x is inside the straight run.
+func _edge_normal(p: Vector2) -> Vector2:
+	var hz := maxf(size_z * 0.5, 0.0001)
+	var cap := maxf(_cap_depth(), 0.0001)
+	var flat: float = size_x * 0.5 - cap
 	var e := maxf(corner_sharpness, 2.0)
-	var t := pow(pow(absf(dir.x), e) + pow(absf(dir.y), e), 1.0 / e)
-	if t < 0.0001:
-		return Vector2.ZERO
-	var sx := dir.x / t
-	var sz := dir.y / t
-	var p := Vector2(hx * sx, hz * sz)
-	var grad := Vector2(pow(absf(sx), e - 1.0) * signf(sx) / hx, pow(absf(sz), e - 1.0) * signf(sz) / hz)
-	var n := grad.normalized() if grad.length() > 0.0001 else p.normalized()
-	return p + n * edge_noise.get_noise_2d(p.x, p.y) * edge_wobble
+	var ax: float = maxf(absf(p.x) - flat, 0.0) / cap
+	var az: float = absf(p.y) / hz
+	var n := Vector2(pow(ax, e - 1.0) * signf(p.x) / cap, pow(az, e - 1.0) * signf(p.y) / hz)
+	return n.normalized() if n.length() > 0.0001 else Vector2(0.0, signf(p.y))
 
 # Godot front-faces are clockwise, so the visible normal is -(geometric CCW normal).
 func _push_quad(idx: PackedInt32Array, v: PackedVector3Array, a: int, b: int, c: int, d: int, want: Vector3) -> void:
@@ -161,6 +297,19 @@ func _smooth_normals(v: PackedVector3Array, idx: PackedInt32Array) -> PackedVect
 	for i in n.size():
 		n[i] = (-n[i]).normalized() if n[i].length() > 0.0 else Vector3.UP
 	return n
+
+# Which way an ordered footprint loop turns, in XZ. A wall hung off that loop
+# has a winding that follows from this, so it does not need a per-quad normal
+# test — and a per-quad test is what fails on the sliver quads at the ends of a
+# long slab, where the hint is nowhere near perpendicular to the quad.
+func _loop_ccw(pts: PackedVector3Array) -> bool:
+	var a := 0.0
+	var c := pts.size()
+	for i in c:
+		var p := pts[i]
+		var q := pts[(i + 1) % c]
+		a += p.x * q.z - q.x * p.z
+	return a > 0.0
 
 func _outward(pts: PackedVector3Array) -> PackedVector3Array:
 	var out := PackedVector3Array()
@@ -287,7 +436,14 @@ func _build_grass(am: ArrayMesh) -> PackedVector3Array:
 		# This cap is nearly vertical, so DOWN alone is an unstable winding hint.
 		_push_quad(idx, v, prev[i], prev[j], under[i], under[j], (out[i] + Vector3.DOWN).normalized())
 
-	_commit(am, v, _smooth_normals(v, idx), idx, axis, grass_color)
+	var norm := _smooth_normals(v, idx)
+	if backland_enabled:
+		# The landform behind continues this boundary. Give the rear row the
+		# height field's own normal on both sides of the weld, so the drips
+		# hanging under it cannot darken the seam into a visible line.
+		for k in nx + 1:
+			norm[k] = seam_normal(v[k].x, v[k].z)
+	_commit(am, v, norm, idx, axis, grass_color)
 
 	var dirt_ring := PackedVector3Array()
 	for i in under:
@@ -314,25 +470,95 @@ func _build_dirt(am: ArrayMesh, ring: PackedVector3Array) -> void:
 	v.append(Vector3(0.0, floor_y, 0.0))
 	axis.append(0)
 
+	# Wall and floor winding come from the loop's own turn, not a normal test.
+	var ccw := _loop_ccw(ring)
 	for i in n:
 		var j := (i + 1) % n
-		_push_quad(idx, v, i, j, n + i, n + j, out[i])
 		var a := n + i
 		var b := n + j
-		if (v[b] - v[a]).cross(v[centre] - v[a]).dot(Vector3.DOWN) > 0.0:
+		if ccw:
+			idx.append_array([i, a, j, a, b, j])
 			idx.append_array([a, centre, b])
 		else:
+			idx.append_array([i, j, a, j, b, a])
 			idx.append_array([a, b, centre])
 
 	_commit(am, v, _smooth_normals(v, idx), idx, axis, dirt_color)
 
-func _build_collision() -> void:
+func _build_collision(source: ArrayMesh) -> void:
 	var old := get_node_or_null("TerrainCollision")
 	if old:
 		old.free()
 	var body := StaticBody3D.new()
 	body.name = "TerrainCollision"
 	var cs := CollisionShape3D.new()
-	cs.shape = mesh.create_trimesh_shape()
+	cs.shape = source.create_trimesh_shape()
 	body.add_child(cs)
 	add_child(body)
+
+# --- Seams for the backland continuation -------------------------------------
+# The landform behind the track is built from these, so it shares this slab's
+# outline, height field, grain size and materials by construction.
+
+func grid_divs() -> Vector2i:
+	return _grid_divs()
+
+func surface_height(x: float, z: float) -> float:
+	return _height(x, z)
+
+# The top grid's rear boundary at lateral coordinate u in [-1, 1]: the exact
+# vertices the backland's first row has to land on.
+func rear_edge_point(u: float) -> Vector2:
+	return _outline(Vector2(u, -1.0))
+
+# Analytic normal of the top height field, so both sides of the weld agree.
+func seam_normal(x: float, z: float) -> Vector3:
+	var c := cell_size()
+	var dx := _height(x + c, z) - _height(x - c, z)
+	var dz := _height(x, z + c) - _height(x, z - c)
+	return Vector3(-dx, 2.0 * c, -dz).normalized()
+
+# Surface of the whole landform in this node's local space, for planting props.
+func landform_height(x: float, z: float) -> float:
+	if backland and z < -size_z * 0.5:
+		return backland.height_at(x, z)
+	return _height(x, z)
+
+func stream_distance(x: float, z: float) -> float:
+	return backland.bank_distance(x, z) if backland else 99.0
+
+# Local z of a point `e` channel half-widths from the stream centre at this x.
+func stream_bank_z(x: float, e: float) -> float:
+	return backland.bank_z(x, e) if backland else -size_z * 0.5
+
+# World-space triplanar at the track's own grain size: the slab lays its
+# fingerprint over 1/texture_scale^2 units, so the same tile spans the same
+# distance on terrain that has no sensible flat projection.
+func clay_material(col: Color) -> StandardMaterial3D:
+	var m := _mat(col)
+	m.uv1_triplanar = true
+	m.uv1_scale = Vector3.ONE * texture_scale * texture_scale
+	return m
+
+func water_material() -> ShaderMaterial:
+	var m := ShaderMaterial.new()
+	m.shader = load("res://shaders/clay_water.gdshader")
+	m.set_shader_parameter("albedo", water_color)
+	m.set_shader_parameter("fingerprint", fingerprint_normal)
+	m.set_shader_parameter("grain", 1.0 / maxf(texture_scale * texture_scale, 0.0001) * 0.35)
+	m.set_shader_parameter("relief", 9.0)
+	return m
+
+func commit_surface(am: ArrayMesh, v: PackedVector3Array, n: PackedVector3Array, idx: PackedInt32Array,
+		col: Color) -> void:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	for i in v.size():
+		st.set_normal(n[i])
+		st.set_uv(Vector2(v[i].x, v[i].z) * texture_scale)
+		st.add_vertex(v[i])
+	for i in idx:
+		st.add_index(i)
+	st.generate_tangents()
+	st.set_material(clay_material(col))
+	st.commit(am)

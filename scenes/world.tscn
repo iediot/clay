@@ -2,9 +2,14 @@
 
 [ext_resource type="PackedScene" uid="uid://kohq2it7di3g" path="res://scenes/player.tscn" id="2_4wyf3"]
 [ext_resource type="Script" uid="uid://dcjwmbvrwd6d6" path="res://scripts/terrain_generator.gd" id="2_rwgxs"]
-[ext_resource type="Script" path="res://scripts/camera_rig.gd" id="3_cmrig"]
+[ext_resource type="Script" uid="uid://bueog0rn1c14j" path="res://scripts/camera_rig.gd" id="3_cmrig"]
+[ext_resource type="PackedScene" uid="uid://dqwquyxq1klo1" path="res://scenes/backdrop.tscn" id="4_bkdrp"]
+[ext_resource type="Script" uid="uid://bdj2ynm354wag" path="res://scripts/scenery.gd" id="5_scnry"]
+[ext_resource type="PackedScene" uid="uid://cpnd56kcevywe" path="res://scenes/mountains.tscn" id="6_mount"]
 
 [sub_resource type="Environment" id="Environment_681ao"]
+background_mode = 1
+background_color = Color(0.27, 0.63, 0.86, 1)
 ambient_light_source = 3
 ambient_light_color = Color(1, 0.85866076, 0.6560208, 1)
 
@@ -31,11 +36,26 @@ light_specular = 0.0
 environment = SubResource("Environment_681ao")
 camera_attributes = SubResource("CameraAttributesPractical_hbf41")
 
+[node name="Backdrop" parent="." unique_id=1873360511 instance=ExtResource("4_bkdrp")]
+
+[node name="Mountains" parent="." unique_id=1502217640 instance=ExtResource("6_mount")]
+cast_shadow = 0
+
 [node name="Terrain" type="MeshInstance3D" parent="." unique_id=165686271]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -2)
 script = ExtResource("2_rwgxs")
+size_x = 800.0
 resolution = 300
 depth = 20.0
 corner_sharpness = 6.0
 edge_wobble = 0.0
 edge_wobble_scale = 0.0
+backland_enabled = true
+backland_floor = -150.0
+rim_drop = 12.0
+stream_depth = 5.0
+stream_fill = 3.2
+
+[node name="Scenery" type="Node3D" parent="." unique_id=1129544878]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -2)
+script = ExtResource("5_scnry")

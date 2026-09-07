@@ -1,0 +1,32 @@
+[gd_scene load_steps=5 format=3 uid="uid://dqwquyxq1klo1"]
+
+[ext_resource type="Script" uid="uid://cm32jxt0ks4ne" path="res://scripts/backdrop_anchor.gd" id="1_anchor"]
+[ext_resource type="Script" uid="uid://s0xsesa0pdob" path="res://scripts/clay_sky.gd" id="2_sky"]
+[ext_resource type="Script" uid="uid://dtuchd3l413n4" path="res://scripts/clay_prop.gd" id="3_prop"]
+[ext_resource type="PackedScene" uid="uid://1nv255sunf7o" path="res://assets/Sun.glb" id="4_sun"]
+
+[node name="Backdrop" type="Node3D" unique_id=150254179]
+
+[node name="SkyAnchor" type="Node3D" parent="." unique_id=977840817]
+script = ExtResource("1_anchor")
+
+[node name="SkyDome" type="MeshInstance3D" parent="SkyAnchor" unique_id=14898895]
+script = ExtResource("2_sky")
+lump = 0.032
+lump_scale = 1.9
+sky_color = Color(0.27, 0.63, 0.86, 1)
+grain = 330.0
+fingerprint_strength = 7.0
+
+[node name="SunAnchor" type="Node3D" parent="." unique_id=1753866035]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -236, 112, -430)
+script = ExtResource("1_anchor")
+follow = 0.94
+
+[node name="Sun" type="Node3D" parent="SunAnchor" unique_id=298282091]
+script = ExtResource("3_prop")
+grain = 9.0
+relief = 15.0
+
+[node name="SunModel" parent="SunAnchor/Sun" unique_id=940028333 instance=ExtResource("4_sun")]
+transform = Transform3D(12, 0, 0, 0, 12, 0, 0, 0, 12, 0, 0, 0)
