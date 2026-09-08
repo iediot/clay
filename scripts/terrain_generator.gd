@@ -40,7 +40,7 @@ extends MeshInstance3D
 @export_group("Backland")
 @export var backland_enabled: bool = false: set = _s29
 @export var backland_depth: float = 250.0: set = _s30
-@export var backland_width: float = 210.0: set = _s31
+@export var backland_margin: float = 170.0: set = _s31
 @export var backland_floor: float = -40.0: set = _s32
 @export var rim_drop: float = 7.0: set = _s33
 @export var rim_overhang: float = 1.6: set = _s34
@@ -88,7 +88,7 @@ func _s27(v): triplanar = v; _dirty()
 func _s28(v): drip_min = v; _dirty()
 func _s29(v): backland_enabled = v; _dirty()
 func _s30(v): backland_depth = v; _dirty()
-func _s31(v): backland_width = v; _dirty()
+func _s31(v): backland_margin = v; _dirty()
 func _s32(v): backland_floor = v; _dirty()
 func _s33(v): rim_drop = v; _dirty()
 func _s34(v): rim_overhang = v; _dirty()
@@ -200,6 +200,10 @@ func _cap_point(t: float) -> Vector2:
 	var i := mini(int(f), last - 1)
 	return _cap_pts[i].lerp(_cap_pts[i + 1], f - float(i))
 
+# Scripts whose contents change what this slab looks like; a digest of them is
+# part of the cache key, so editing any of them rebuilds rather than reusing.
+const SOURCES := ["res://scripts/terrain_generator.gd", "res://scripts/backland.gd"]
+
 func generate():
 	noise.seed = noise_seed
 	noise.frequency = noise_frequency
@@ -217,6 +221,21 @@ func generate():
 	drip_noise.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
 	drip_noise.fractal_octaves = 2
 
+	# The backland's surface queries are needed for planting whether or not the
+	# mesh itself came off disk, so it is always constructed; only the mesh
+	# building is skipped.
+	backland = ClayBackland.new(self) if backland_enabled else null
+
+	var key := ClayMeshCache.key(ClayMeshCache.params_of(self), SOURCES)
+	var cached := ClayMeshCache.fetch("terrain", key) as ArrayMesh
+	if cached:
+		mesh = cached
+		if backland:
+			backland.prepare()
+		if not Engine.is_editor_hint():
+			_attach_collision(_track_of(cached).create_trimesh_shape(), key)
+		return
+
 	var am := ArrayMesh.new()
 	var ring := _build_grass(am)
 	_build_dirt(am, ring)
@@ -226,17 +245,41 @@ func generate():
 	for i in am.get_surface_count():
 		track.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, am.surface_get_arrays(i))
 
-	backland = null
-	if backland_enabled:
-		backland = ClayBackland.new(self)
+	if backland:
 		backland.build(am)
 	mesh = am
+	ClayMeshCache.store("terrain", key, am)
 
 	if not Engine.is_editor_hint():
-		_build_collision(track)
+		_attach_collision(track.create_trimesh_shape(), key)
+
+# The track is the first two surfaces; the landform behind it is scenery and
+# carries no collision.
+func _track_of(full: ArrayMesh) -> ArrayMesh:
+	var track := ArrayMesh.new()
+	for i in mini(2, full.get_surface_count()):
+		track.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, full.surface_get_arrays(i))
+	return track
 
 func _height(x: float, z: float) -> float:
 	return noise.get_noise_2d(x, z) * height_scale
+
+# How far the landform reaches either side of centre. The margin is a camera
+# property, not a track property — it is how much ground has to sit beside the
+# route to fill the frame — so it is added to the half-length rather than
+# multiplied by it. A longer track therefore grows the world by exactly its own
+# extra length and keeps the same amount of shoulder.
+func landform_half_width() -> float:
+	return size_x * 0.5 + backland_margin
+
+# One grass drip, `frac` of the way down the overhang, for a boundary point at
+# (x, z): outward bulge in .x, drop in .y. The track's own edge and every
+# falloff on the landform behind it are hung off this, so they sag alike.
+func drip_profile(x: float, z: float, frac: float) -> Vector2:
+	var n01 := drip_noise.get_noise_2d(x, z) * 0.5 + 0.5
+	var lobe := drip_min + (1.0 - drip_min) * smoothstep(0.0, 1.0, clampf(n01 + drip_bias, 0.0, 1.0))
+	var dep := grass_thickness + lobe * drip_length
+	return Vector2(drip_bulge * sin(frac * PI) - drip_taper * frac * frac, dep * frac)
 
 # Hand-wobbled footprint, from a point on the unit square's edge: the square's
 # two end edges are the slab's end caps and its two long edges are the straight
@@ -324,18 +367,53 @@ func _outward(pts: PackedVector3Array) -> PackedVector3Array:
 		out.append(Vector3(o.x, 0.0, o.y))
 	return out
 
+# Surfaces are handed to the mesh as finished arrays rather than fed through
+# SurfaceTool a vertex at a time. SurfaceTool's generate_tangents was most of
+# this slab's build cost, and on the dirt it was pathological: the floor fan
+# shares one centre vertex with every one of its triangles, so 12k vertices cost
+# more to tangent than the 210k of the grass. None of that work is needed — the
+# UVs here are flat projections along a known axis, so the tangent frame follows
+# from that axis directly.
 func _commit(am: ArrayMesh, v: PackedVector3Array, n: PackedVector3Array, idx: PackedInt32Array, axis: PackedInt32Array, col: Color) -> void:
-	var st := SurfaceTool.new()
-	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var uv := PackedVector2Array()
+	uv.resize(v.size())
+	var tan := PackedFloat32Array()
+	tan.resize(v.size() * 4)
 	for i in v.size():
-		st.set_normal(n[i])
-		st.set_uv(_uv(v[i], axis[i]))
-		st.add_vertex(v[i])
-	for i in idx:
-		st.add_index(i)
-	st.generate_tangents()
-	st.set_material(_mat(col))
-	st.commit(am)
+		uv[i] = _uv(v[i], axis[i])
+		_write_tangent(tan, i, n[i], _uv_basis(axis[i]))
+	var arr := []
+	arr.resize(Mesh.ARRAY_MAX)
+	arr[Mesh.ARRAY_VERTEX] = v
+	arr[Mesh.ARRAY_NORMAL] = n
+	arr[Mesh.ARRAY_TANGENT] = tan
+	arr[Mesh.ARRAY_TEX_UV] = uv
+	arr[Mesh.ARRAY_INDEX] = idx
+	am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
+	am.surface_set_material(am.get_surface_count() - 1, _mat(col))
+
+# World directions the projection's U and V run along, per projection axis.
+func _uv_basis(axis: int) -> Array:
+	match axis:
+		1: return [Vector3.BACK, Vector3.DOWN]
+		2: return [Vector3.RIGHT, Vector3.DOWN]
+	return [Vector3.RIGHT, Vector3.BACK]
+
+# Gram-Schmidt the U direction against the normal, then record which way the
+# binormal has to run, which is what Godot stores in the tangent's w.
+func _write_tangent(tan: PackedFloat32Array, i: int, nrm: Vector3, basis: Array) -> void:
+	var u: Vector3 = basis[0]
+	var t := u - nrm * nrm.dot(u)
+	if t.length_squared() < 0.000001:
+		t = basis[1] - nrm * nrm.dot(basis[1])
+		if t.length_squared() < 0.000001:
+			t = Vector3.RIGHT
+	t = t.normalized()
+	var w: float = 1.0 if nrm.cross(t).dot(basis[1]) >= 0.0 else -1.0
+	tan[i * 4] = t.x
+	tan[i * 4 + 1] = t.y
+	tan[i * 4 + 2] = t.z
+	tan[i * 4 + 3] = w
 
 # Projection axis is fixed per vertex when it is built, so a triangle never
 # interpolates between two different projections.
@@ -409,12 +487,9 @@ func _build_grass(am: ArrayMesh) -> PackedVector3Array:
 		var cur := PackedInt32Array()
 		for i in n:
 			var p := ring_pos[i]
-			var n01 := drip_noise.get_noise_2d(p.x, p.z) * 0.5 + 0.5
-			var lobe := drip_min + (1.0 - drip_min) * smoothstep(0.0, 1.0, clampf(n01 + drip_bias, 0.0, 1.0))
-			var dep := grass_thickness + lobe * drip_length
-			var radial := drip_bulge * sin(frac * PI) - drip_taper * frac * frac
+			var drip := drip_profile(p.x, p.z, frac)
 			cur.append(v.size())
-			v.append(Vector3(p.x + out[i].x * radial, p.y - dep * frac, p.z + out[i].z * radial))
+			v.append(Vector3(p.x + out[i].x * drip.x, p.y - drip.y, p.z + out[i].z * drip.x))
 			axis.append(_axis_of(out[i]))
 		for i in n:
 			var j := (i + 1) % n
@@ -485,14 +560,14 @@ func _build_dirt(am: ArrayMesh, ring: PackedVector3Array) -> void:
 
 	_commit(am, v, _smooth_normals(v, idx), idx, axis, dirt_color)
 
-func _build_collision(source: ArrayMesh) -> void:
+func _attach_collision(shape: Shape3D, _key: String) -> void:
 	var old := get_node_or_null("TerrainCollision")
 	if old:
 		old.free()
 	var body := StaticBody3D.new()
 	body.name = "TerrainCollision"
 	var cs := CollisionShape3D.new()
-	cs.shape = source.create_trimesh_shape()
+	cs.shape = shape
 	body.add_child(cs)
 	add_child(body)
 
@@ -524,6 +599,22 @@ func landform_height(x: float, z: float) -> float:
 		return backland.height_at(x, z)
 	return _height(x, z)
 
+# Is there any generated surface at this column? Scenery asks before it plants,
+# so nothing is ever dropped into the air off the side of the world.
+func landform_ground(x: float, z: float) -> bool:
+	if z >= -size_z * 0.5:
+		# Inside the track footprint: a straight run closed by superellipse caps.
+		var hz := maxf(size_z * 0.5, 0.0001)
+		var cap := maxf(_cap_depth(), 0.0001)
+		var flat: float = size_x * 0.5 - cap
+		if absf(z) > hz:
+			return false
+		if absf(x) <= flat:
+			return true
+		var e := maxf(corner_sharpness, 2.0)
+		return pow((absf(x) - flat) / cap, e) + pow(absf(z) / hz, e) <= 1.0
+	return backland.has_ground(x, z) if backland else false
+
 func stream_distance(x: float, z: float) -> float:
 	return backland.bank_distance(x, z) if backland else 99.0
 
@@ -549,16 +640,13 @@ func water_material() -> ShaderMaterial:
 	m.set_shader_parameter("relief", 9.0)
 	return m
 
+func dirt_clay() -> StandardMaterial3D:
+	return clay_material(dirt_color)
+
 func commit_surface(am: ArrayMesh, v: PackedVector3Array, n: PackedVector3Array, idx: PackedInt32Array,
 		col: Color) -> void:
-	var st := SurfaceTool.new()
-	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	for i in v.size():
-		st.set_normal(n[i])
-		st.set_uv(Vector2(v[i].x, v[i].z) * texture_scale)
-		st.add_vertex(v[i])
-	for i in idx:
-		st.add_index(i)
-	st.generate_tangents()
-	st.set_material(clay_material(col))
-	st.commit(am)
+	var axis := PackedInt32Array()
+	axis.resize(v.size())
+	var mat := clay_material(col)
+	_commit(am, v, n, idx, axis, col)
+	am.surface_set_material(am.get_surface_count() - 1, mat)

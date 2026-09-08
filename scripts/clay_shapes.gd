@@ -202,10 +202,3 @@ static func flower(rng: RandomNumberGenerator, size: float) -> ArrayMesh:
 	bloom.generate_tangents()
 	bloom.commit(am)
 	return am
-
-# The pad of clay pushed up round a planted trunk, so nothing looks dropped in.
-static func mound(rng: RandomNumberGenerator, size: float) -> ArrayMesh:
-	var st := SurfaceTool.new()
-	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	_blob(st, 0, rng, Vector3.ZERO, Vector3(size, size * 0.42, size), 5, 0.28, 9, 14)
-	return _finish(st)

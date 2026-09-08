@@ -8,24 +8,40 @@ deformation, the camera or the automated check.
 ## Current State
 Verified from the gameplay camera at x = -36, 0 and +36 (`tools/shot.tscn`).
 
+- **Everything scales with `size_x`.** The landform's half-width is the track's
+  half-length plus `backland_margin` — the margin is how much ground the camera needs beside the
+  route, so it is added rather than multiplied, and lengthening the track grows the world by exactly
+  its own extra length. The stream's reach and drift, the mountain range's span and count, and the
+  scenery's cluster counts are all expressed per unit of length, so density and framing are the same
+  at any size_x. Verified identical framing at 60, 200 and 800.
 - **One landform.** `scripts/backland.gd` continues the terrain slab behind the track. Its first
   row of vertices *is* the track's rear top edge — same `_outline` call, same height noise — so the
   weld is exact by construction, and both sides of it take the height field's analytic normal so it
   does not shade as a crease. From there the surface fans out to ±210, banks up into grass knolls
   and closes on a low ridge. Grass only: the dirt cutaway remains unique to the track, whose own
   overhang, drips and end caps are untouched.
-- **The landform's free sides** roll over into a lipped grass edge and a skirt down to y = -150,
-  so the landmass reads as a finite sculpted object rather than an open landscape. The seam row is
-  left open because it is welded to the track.
+- **Every falloff is grass over dirt.** Where the landform's grass runs out it is built like the
+  track's edge and never as a cut sheet: the mat rolls over into drips hung off the same shared
+  `drip_profile`, closes back underneath at its own thickness, and stands on a real mass of dirt in
+  the track's own dirt clay. The seam row is left open because it is welded to the track.
+- **The fan carries the track's column density only where it is needed.** Fine columns out to
+  12 units behind the seam — the weld has to match the track vertex for vertex — then a thinned set
+  joined by one stitched strip that uses every fine vertex, so the two densities share an edge and
+  cannot crack. Without it an 800-long track put 330k vertices into background fan.
 - **Collision is the track only.** `terrain_generator.gd` snapshots the two track surfaces before
   the backland is appended and builds the trimesh from that, so physics is unchanged.
-- **Mountains** (`scripts/clay_mountains.gd`, `scenes/mountains.tscn`) are separate background
-  objects standing behind the landform, not terrain: eight blunt grey clay cones with a couple of
-  gentle lobes each, varied in height, width and bluntness. Their feet sit below the landform's
-  ridge, so only their upper bodies are seen.
-- **Snow** is a second clay layer over each cone, built with the track's overhang logic: the line it
-  stops at wanders with the bearing, and below it tongues sag down selected sides, bulging and then
-  thinning to close against the rock. It has visible thickness, not a painted stripe.
+- **Mountains** (`scripts/clay_mountains.gd`, `scenes/mountains.tscn`) are one height field behind
+  the landform, not terrain and not a row of cones. Each is described by a crest line — a short
+  polyline of points carrying a height and a flank width — so the large forms are the ones real
+  mountains have: a summit, ridges running off it, saddles between tops, and flanks that run out
+  further on one side than the other. Six named silhouettes (horn, crest, shoulder, twin, saddle,
+  dome) are drawn from in an alternating major/minor rhythm. A separable blur over the field is what
+  makes them plasticine — broad blunt surfaces, rounded crests, no small detail anywhere.
+- **Snow** is a second sheet over the same field, clipped to a wandering contour by marching squares
+  so its edge is a smooth curve rather than a grid staircase, lifted along the surface normal, and
+  closed by a lip that bulges out and comes back down onto the rock a little way downhill. Because
+  the foot is sampled from the rock height it cannot float, and because the field carries each
+  summit's own height the snow line follows that mountain rather than one flat altitude.
 - **Sky and sun** (`scenes/backdrop.tscn`). The sky is one flat cyan-blue inward dome thumbed into
   broad lumps, with the fingerprint scaled up (330 units per tile) to still read at 900 units away.
   It is locked to the camera, so it never parallaxes. `Sun.glb` sits upright at x -236, y 112,
@@ -35,13 +51,35 @@ Verified from the gameplay camera at x = -36, 0 and +36 (`tools/shot.tscn`).
   lifted far bank so the camera looks into it rather than skimming it. The water is a ribbon on
   `shaders/clay_water.gdshader` — matte, opaque, its fingerprint creeping downstream with a small
   cross swell. Planting is kept out of the bed.
-- **Scenery** (`scripts/scenery.gd`, `scripts/clay_shapes.gd`). Authored clusters, each mixing a
-  tall silhouette, a middle mass and a low fringe, plus a gappy verge on the bank behind the track,
-  bank dressing along the water, and a few lone trees. `Tree1.glb`/`Tree2.glb` are used as-is with
+- **Scenery** (`scripts/scenery.gd`, `scripts/clay_shapes.gd`). Five depth bands, each with its own
+  cluster rate per 100 units of length, planted biggest-first: tree stands claim their room, then
+  shrubs and stones, then ground cover between them, then a sweep that seeds whatever came out bare.
+  Every candidate is tested against a coarse occupancy hash using a per-kind footprint, so a flower
+  cannot grow up through a stone and a trunk cannot stand in a boulder; against the landform's own
+  extent, so nothing is planted in the air off the rim; and against a low-frequency mask that keeps
+  a few deliberate clearings. Nothing is placed within 8 units of the track's rear edge.
+- **Clusters are mixed communities, not patches of one kind.** A cluster draws its whole list from
+  one character — grove, thicket, rocky, meadow, clearing — so stones, stumps and fallen logs stand
+  among a grove's trees and a rocky patch has a tree or two in it. Placement still runs biggest-first
+  globally: trees and logs go down across the whole world before anything small does, so they keep
+  their room without the kinds separating into patches.
+- **Woody props are remeshed reference models.** `Log1/2`, `Stump1/2/3`, `Tree3` (broadleaf) and
+  `Tree4` (small conifer) come from the reference forest set through
+  `tools/blender/export_clay_props.py`, which repeats the Tree1/Tree2 recipe: split, join the canopy,
+  voxel remesh, swell, relax. `ClayShapes` now only makes the small ground cover. Loose stone comes
+  in five tones, two of them the grey the mountains are made of. `Tree1.glb`/`Tree2.glb` are used as-is with
   trunk and canopy recoloured and the shared clay material applied; each is set into the ground with
   a mound of clay pushed up round the foot. Everything else is generated: rocks and bush lobes are
   lumpy balls; grass blades, flower stems and leaves are swept tapered strands laid along a bend, so
   each one arcs and droops as a single continuous piece.
+
+### Performance
+Launch is dominated by mesh generation, not by rendering: uncapped the scene runs at about 310 fps
+(3.2 ms/frame, ~1400 draw calls). Start-up at `size_x` 800 went 2.38 s -> 1.30 s through, in order of
+what each was worth: handing surfaces over as arrays with analytic tangents instead of `SurfaceTool`,
+caching the built terrain mesh on disk, reading neighbouring rows by index rather than searching them
+by x when the landform's two column densities agree, and skipping snow cells whose corners are all
+outside the sheet.
 
 ### Measured
 - `tools/deform_probe.tscn`: all seven checks pass, with the same numbers as the pre-change

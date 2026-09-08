@@ -12,16 +12,18 @@ script = ExtResource("1_anchor")
 
 [node name="SkyDome" type="MeshInstance3D" parent="SkyAnchor" unique_id=14898895]
 script = ExtResource("2_sky")
-lump = 0.032
-lump_scale = 1.9
-sky_color = Color(0.27, 0.63, 0.86, 1)
-grain = 330.0
-fingerprint_strength = 7.0
+lump = 0.075
+lump_scale = 2.6
+sky_color = Color(0.17, 0.56, 0.88, 1)
+grain = 300.0
+shade_contrast = 0.17
+grain_relief = 1.2
 
 [node name="SunAnchor" type="Node3D" parent="." unique_id=1753866035]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -236, 112, -430)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 523.94, 139.86, -499.74)
 script = ExtResource("1_anchor")
 follow = 0.94
+face_camera = true
 
 [node name="Sun" type="Node3D" parent="SunAnchor" unique_id=298282091]
 script = ExtResource("3_prop")

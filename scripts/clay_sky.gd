@@ -10,6 +10,8 @@ extends MeshInstance3D
 @export var segments: int = 128: set = _s2
 @export var rings: int = 56: set = _s3
 @export_range(0.0, 0.3) var lump: float = 0.055: set = _s4
+@export_range(0.0, 0.6) var shade_contrast: float = 0.15: set = _s10
+@export_range(0.0, 3.0) var grain_relief: float = 1.0: set = _s11
 @export var lump_scale: float = 3.2: set = _s5
 @export var sky_color: Color = Color(0.42, 0.79, 0.95): set = _s6
 @export var grain: float = 240.0: set = _s7
@@ -30,6 +32,8 @@ func _s6(v): sky_color = v; _dirty()
 func _s7(v): grain = v; _dirty()
 func _s8(v): fingerprint_strength = v; _dirty()
 func _s9(v): fingerprint_normal = v; _dirty()
+func _s10(v): shade_contrast = v; _dirty()
+func _s11(v): grain_relief = v; _dirty()
 
 func _ready() -> void:
 	generate()
@@ -111,16 +115,12 @@ func generate() -> void:
 	mesh = am
 	custom_aabb = AABB(Vector3.ONE * -radius * 1.2, Vector3.ONE * radius * 2.4)
 
-func _mat() -> StandardMaterial3D:
-	var m := StandardMaterial3D.new()
-	m.albedo_color = sky_color
-	m.metallic = 0.0
-	m.metallic_specular = 0.0
-	m.roughness = 1.0
-	m.uv1_triplanar = true
-	m.uv1_scale = Vector3.ONE / maxf(grain, 0.001)
-	if fingerprint_normal:
-		m.normal_enabled = true
-		m.normal_texture = fingerprint_normal
-		m.normal_scale = fingerprint_strength
+func _mat() -> ShaderMaterial:
+	var m := ShaderMaterial.new()
+	m.shader = load("res://shaders/clay_sky.gdshader")
+	m.set_shader_parameter("sky_color", sky_color)
+	m.set_shader_parameter("fingerprint", fingerprint_normal)
+	m.set_shader_parameter("grain", grain)
+	m.set_shader_parameter("relief", grain_relief)
+	m.set_shader_parameter("contrast", shade_contrast)
 	return m

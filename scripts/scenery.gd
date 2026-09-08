@@ -12,8 +12,20 @@ extends Node3D
 # grass with only its base buried, and every prop carries the shared clay
 # material at one world grain size.
 
-const TREE_A := preload("res://assets/Tree1.glb")
-const TREE_B := preload("res://assets/Tree2.glb")
+# Every woody prop is a reference-set model put through the same clay treatment
+# as Tree1/Tree2: split into loose parts, canopy parts joined, voxel remeshed,
+# swelled a little and relaxed until the low-poly facets are gone. See
+# docs/decisions.md — nothing here is a stack of primitives any more.
+const MODELS := {
+	"spruce": [preload("res://assets/Tree1.glb")],
+	"leafy": [preload("res://assets/Tree2.glb")],
+	"broad": [preload("res://assets/Tree3.glb")],
+	"conifer": [preload("res://assets/Tree4.glb")],
+	"stump": [preload("res://assets/Stump1.glb"), preload("res://assets/Stump2.glb"),
+		preload("res://assets/Stump3.glb")],
+	"log": [preload("res://assets/Log1.glb"), preload("res://assets/Log2.glb")],
+}
+const CANOPIES := ["spruce", "leafy", "broad", "conifer"]
 const FINGERPRINT := preload("res://assets/GrassBlock_imperfection_0002_normal_opengl_2k.png")
 
 const GRAIN := 3.6
@@ -22,61 +34,59 @@ const RELIEF := 13.0
 # Composed clusters, not a scatter. Each entry mixes kinds so a group has a tall
 # silhouette, a middle mass and a low fringe; counts and spreads are uneven on
 # purpose. All of it sits well behind the track, so the route stays clear.
-const GROUPS := [
-	# Near framing groves: big enough to read as silhouettes, set well out to the
-	# sides so the route and the cutaway keep the middle of the frame.
-	{"mix": ["leafy", "leafy", "spruce"], "x": -103.0, "z": -27.0, "r": 12.0, "n": 5, "s": [0.62, 0.92]},
-	{"mix": ["bush", "bush", "tuft", "flower"], "x": -95.0, "z": -19.0, "r": 9.0, "n": 12, "s": [1.0, 2.3]},
-	{"mix": ["spruce", "spruce", "leafy"], "x": 84.0, "z": -30.0, "r": 13.0, "n": 5, "s": [0.58, 0.88]},
-	{"mix": ["bush", "tuft", "rock", "flower"], "x": 92.0, "z": -20.0, "r": 10.0, "n": 12, "s": [0.9, 2.2]},
+# Cluster characters. A cluster draws its props from one of these bags, so a
+# grove has stones and stumps standing among its trees and a rocky patch has a
+# tree or two in it — rather than the world being patches of one kind each.
+const COMMUNITIES := {
+	"grove": ["spruce", "leafy", "broad", "conifer", "spruce", "broad", "stump", "log",
+		"bush", "bush", "rock", "tuft", "tuft", "flower"],
+	"thicket": ["conifer", "broad", "bush", "bush", "bush", "tuft", "tuft", "flower", "rock", "stump", "leafy"],
+	"rocky": ["rock", "rock", "rock", "bush", "tuft", "tuft", "flower", "log", "spruce", "conifer"],
+	"meadow": ["flower", "flower", "tuft", "tuft", "tuft", "bush", "rock", "conifer", "stump"],
+	"clearing": ["tuft", "tuft", "flower", "stump", "rock", "log", "conifer"],
+}
 
-	# Middle distance: two loose groves either side of the stream, plus the
-	# clumps that give the banks a shape.
-	{"mix": ["leafy", "spruce"], "x": -47.0, "z": -56.0, "r": 11.0, "n": 4, "s": [0.50, 0.72]},
-	{"mix": ["bush", "tuft"], "x": -55.0, "z": -46.0, "r": 8.0, "n": 8, "s": [1.1, 2.2]},
-	{"mix": ["spruce", "leafy", "leafy"], "x": 34.0, "z": -62.0, "r": 12.0, "n": 5, "s": [0.48, 0.74]},
-	{"mix": ["rock", "rock", "tuft"], "x": 12.0, "z": -50.0, "r": 8.0, "n": 6, "s": [0.9, 1.9]},
-	{"mix": ["bush", "tuft", "flower"], "x": 128.0, "z": -48.0, "r": 11.0, "n": 10, "s": [0.9, 2.1]},
-	{"mix": ["rock", "tuft"], "x": -134.0, "z": -44.0, "r": 10.0, "n": 7, "s": [0.9, 1.9]},
-
-	# Hillside stands, small with distance, breaking the horizon into layers.
-	{"mix": ["spruce", "spruce", "leafy"], "x": -152.0, "z": -86.0, "r": 22.0, "n": 8, "s": [0.40, 0.66]},
-	{"mix": ["spruce"], "x": -86.0, "z": -104.0, "r": 16.0, "n": 5, "s": [0.36, 0.56]},
-	{"mix": ["leafy", "spruce"], "x": -18.0, "z": -122.0, "r": 17.0, "n": 5, "s": [0.32, 0.50]},
-	{"mix": ["spruce", "leafy"], "x": 72.0, "z": -98.0, "r": 20.0, "n": 7, "s": [0.36, 0.60]},
-	{"mix": ["leafy"], "x": 158.0, "z": -92.0, "r": 18.0, "n": 5, "s": [0.38, 0.58]},
-
-	# Outer flanks: the landform sweeps wide past the ends of the track, so those
-	# slopes get their own planting instead of reading as bare ramps.
-	{"mix": ["leafy", "spruce", "spruce"], "x": -196.0, "z": -40.0, "r": 18.0, "n": 6, "s": [0.52, 0.86]},
-	{"mix": ["bush", "tuft", "rock", "flower"], "x": -182.0, "z": -26.0, "r": 14.0, "n": 13, "s": [0.9, 2.2]},
-	{"mix": ["spruce", "leafy"], "x": -238.0, "z": -66.0, "r": 20.0, "n": 6, "s": [0.46, 0.74]},
-	{"mix": ["leafy", "leafy", "spruce"], "x": 176.0, "z": -36.0, "r": 17.0, "n": 6, "s": [0.54, 0.90]},
-	{"mix": ["bush", "tuft", "flower", "rock"], "x": 164.0, "z": -24.0, "r": 13.0, "n": 13, "s": [0.9, 2.2]},
-	{"mix": ["spruce", "leafy"], "x": 224.0, "z": -60.0, "r": 20.0, "n": 6, "s": [0.46, 0.76]},
-	{"mix": ["rock", "tuft"], "x": 208.0, "z": -96.0, "r": 16.0, "n": 8, "s": [1.0, 2.2]},
-	{"mix": ["rock", "tuft", "bush"], "x": 104.0, "z": -16.0, "r": 15.0, "n": 11, "s": [0.9, 2.0]},
-	{"mix": ["rock", "tuft", "bush"], "x": -110.0, "z": -16.0, "r": 15.0, "n": 11, "s": [0.9, 2.0]},
-	{"mix": ["rock", "tuft"], "x": -216.0, "z": -104.0, "r": 16.0, "n": 8, "s": [1.0, 2.2]},
-
-	# Lone trees, to keep the clumps from reading as a hedge.
-	{"mix": ["leafy"], "x": -12.0, "z": -74.0, "r": 3.0, "n": 1, "s": [0.66, 0.72]},
-	{"mix": ["spruce"], "x": 58.0, "z": -122.0, "r": 5.0, "n": 2, "s": [0.40, 0.52]},
-	{"mix": ["leafy"], "x": -118.0, "z": -140.0, "r": 7.0, "n": 2, "s": [0.34, 0.44]},
+# Planting bands, measured back from the track's rear edge: the depth range, how
+# many clusters to try per 100 units of length, how many props each holds, and
+# which characters that band draws from. Counts are per unit of length, so a
+# longer track gets more planting at the same density rather than the same
+# planting spread thinner.
+const BANDS := [
+	{"z": [-13.0, -28.0], "clusters": 3.8, "n": [5, 12], "tree": [0.42, 0.72], "prop": [0.8, 1.6],
+		"mix": ["grove", "thicket", "grove", "meadow", "thicket"]},
+	{"z": [-28.0, -56.0], "clusters": 3.4, "n": [6, 14], "tree": [0.50, 0.86], "prop": [0.9, 2.2],
+		"mix": ["grove", "thicket", "meadow", "rocky", "grove"]},
+	{"z": [-56.0, -102.0], "clusters": 3.6, "n": [7, 16], "tree": [0.44, 0.76], "prop": [0.9, 2.3],
+		"mix": ["grove", "grove", "rocky", "thicket", "clearing"]},
+	{"z": [-102.0, -162.0], "clusters": 3.8, "n": [8, 18], "tree": [0.34, 0.60], "prop": [0.9, 2.1],
+		"mix": ["grove", "grove", "thicket", "rocky", "meadow"]},
+	{"z": [-162.0, -238.0], "clusters": 3.4, "n": [8, 18], "tree": [0.26, 0.46], "prop": [0.85, 1.9],
+		"mix": ["grove", "grove", "grove", "thicket", "rocky"]},
 ]
 
-# Clumps of low planting on the bank just behind the track. Deliberately gappy:
-# a fringe with holes in it, not a border.
-const VERGE := [
-	{"x": -232.0, "n": 8}, {"x": -196.0, "n": 11}, {"x": -157.0, "n": 9},
-	{"x": -121.0, "n": 12}, {"x": -95.0, "n": 11}, {"x": -73.0, "n": 8}, {"x": -30.0, "n": 13},
-	{"x": 21.0, "n": 10}, {"x": 63.0, "n": 14}, {"x": 92.0, "n": 11}, {"x": 117.0, "n": 9},
-	{"x": 154.0, "n": 12}, {"x": 196.0, "n": 10}, {"x": 232.0, "n": 8},
-]
+# Room each kind needs around it, as a multiple of its own scale. Placement is
+# ordered biggest-first and every candidate is tested against what is already
+# down, so a flower cannot grow up through a stone and a trunk cannot stand in
+# a boulder.
+# Room each kind needs, as a multiple of its own scale — these are model units,
+# so a log's is half its length rather than a guess.
+const FOOTPRINT := {"spruce": 4.4, "leafy": 5.6, "broad": 5.2, "conifer": 3.2,
+	"log": 4.4, "stump": 1.9, "bush": 1.15, "rock": 1.25, "tuft": 0.7, "flower": 0.55}
+# Stumps and logs are modelled at reference-set size, so they get their own range.
+const WOOD_SIZE := [0.42, 0.85]
+# Flowers are single blooms on a stem, not bushes; they need their own range or
+# they come out the size of the shrubs beside them.
+const FLOWER_SIZE := [0.42, 0.78]
+const TREES := ["spruce", "leafy", "broad", "conifer"]
 
-# Reeds and stones along the water, placed against the channel rather than in a
-# circle, so the stream has a bank instead of an edge.
-const BANKS := [-140.0, -96.0, -58.0, -20.0, 16.0, 58.0, 104.0, 146.0]
+# Stone is not all one colour: some of it is the grey the mountains are made of.
+const STONE_TONES := [
+	Color(0.62, 0.46, 0.35),
+	Color(0.54, 0.40, 0.31),
+	Color(0.56, 0.56, 0.58),
+	Color(0.48, 0.48, 0.52),
+	Color(0.66, 0.63, 0.58),
+]
 
 const BLOOMS := [
 	Color(0.94, 0.31, 0.36),
@@ -141,99 +151,201 @@ func build() -> void:
 
 	var rng := RandomNumberGenerator.new()
 	rng.seed = scenery_seed
-	var models := {"spruce": _parts(TREE_A), "leafy": _parts(TREE_B)}
+	_occ.clear()
+	_clear_mask.seed = scenery_seed + 61
+	_clear_mask.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
+	_clear_mask.frequency = 0.006
+
+	var models := {}
+	for kind in MODELS:
+		var set: Array = []
+		for scene in MODELS[kind]:
+			set.append(_parts(scene))
+		models[kind] = set
 	# A small library of shapes, reused across the placements. Building a fresh
 	# mesh per plant is what made this scene slow to open; a dozen variants with
 	# random size and spin read just as hand-made.
 	var lib := {
-		"tuft": _variants(12, func(r): return ClayShapes.tuft(r, 1.0, r.randi_range(5, 9), 0.55), rng),
-		"flower": _variants(10, func(r): return ClayShapes.flower(r, 1.0), rng),
-		"bush": _variants(8, func(r): return ClayShapes.bush(r, 1.0), rng),
-		"rock": _variants(12, func(r): return ClayShapes.rock(r, 1.0), rng),
-		"mound": _variants(6, func(r): return ClayShapes.mound(r, 1.0), rng),
+		"tuft": _variants(14, func(r): return ClayShapes.tuft(r, 1.0, r.randi_range(5, 9), 0.55), rng),
+		"flower": _variants(12, func(r): return ClayShapes.flower(r, 1.0), rng),
+		"bush": _variants(10, func(r): return ClayShapes.bush(r, 1.0), rng),
+		"rock": _variants(14, func(r): return ClayShapes.rock(r, 1.0), rng),
 	}
 
+	var reach: float = terrain.landform_half_width() * 0.97
+	var run: float = reach * 2.0
 
-	for g in GROUPS:
-		for i in g.n:
-			var x: float = g.x
-			var z: float = g.z
-			var ok := false
-			# Keep planting out of the stream bed; a few tries is plenty.
-			for attempt in 8:
-				var a := rng.randf() * TAU
-				var rad: float = pow(rng.randf(), 0.65) * g.r
-				x = g.x + cos(a) * rad
-				z = g.z + sin(a) * rad * 0.7
-				if terrain.stream_distance(x, z) > 1.25:
-					ok = true
-					break
-			if not ok:
-				continue
-			var kind: String = g.mix[rng.randi() % g.mix.size()]
-			var y: float = terrain.landform_height(x, z)
-			var s: float = rng.randf_range(g.s[0], g.s[1])
-			var yaw := rng.randf() * TAU
-			match kind:
-				"spruce", "leafy":
-					_plant(models[kind], lib, rng, Vector3(x, y, z), s,
-						yaw, _canopy(rng, kind))
-				"bush":
-					_prop(_pick(lib, "bush", rng), Vector3(x, y - s * 0.28, z), yaw, s,
-						bush_color.lerp(LEAF_TONES[rng.randi() % LEAF_TONES.size()], 0.45))
-				"rock":
-					_prop(_pick(lib, "rock", rng), Vector3(x, y - s * 0.3, z), yaw, s,
-						rock_color.lerp(rock_color.darkened(0.3), rng.randf()))
-				"tuft":
-					_prop(_pick(lib, "tuft", rng), Vector3(x, y - s * 0.12, z), yaw, s * 0.9,
-						LEAF_TONES[rng.randi() % LEAF_TONES.size()])
-				"flower":
-					_prop(_pick(lib, "flower", rng), Vector3(x, y - s * 0.1, z), yaw, s, stem_color,
-						BLOOMS[rng.randi() % BLOOMS.size()])
+	# Lay out the clusters first, then plant them in two sweeps. Everything with
+	# a big footprint goes down across the whole world before anything small
+	# does, so trees still claim their room — but each cluster's own list is
+	# mixed, which is what interleaves the kinds instead of making patches.
+	var clusters: Array = []
+	for band in BANDS:
+		for i in int(run / 100.0 * band.clusters):
+			var kinds: Array = []
+			var bag: Array = COMMUNITIES[band.mix[rng.randi() % band.mix.size()]]
+			for j in rng.randi_range(band.n[0], band.n[1]):
+				kinds.append(bag[rng.randi() % bag.size()])
+			clusters.append({
+				"x": rng.randf_range(-reach, reach),
+				"z": rng.randf_range(band.z[0], band.z[1]),
+				"spread": rng.randf_range(7.0, 22.0),
+				"kinds": kinds, "band": band,
+			})
 
-	# The verge: a low fringe on the bank immediately behind the track, so the
-	# nearest ground is planted without anything tall entering the route.
-	for band in VERGE:
-		for i in band.n:
-			var x: float = band.x + rng.randf_range(-9.0, 9.0)
-			var z: float = -4.0 - rng.randf_range(3.5, 15.0)
-			if terrain.stream_distance(x, z) < 1.25:
-				continue
-			var y: float = terrain.landform_height(x, z)
-			var roll := rng.randf()
-			if roll < 0.45:
-				var s := rng.randf_range(0.9, 1.8)
-				_prop(_pick(lib, "tuft", rng), Vector3(x, y - 0.15, z), rng.randf() * TAU, s,
-					LEAF_TONES[rng.randi() % LEAF_TONES.size()])
-			elif roll < 0.78:
-				var s := rng.randf_range(0.9, 1.6)
-				_prop(_pick(lib, "flower", rng), Vector3(x, y - s * 0.1, z), rng.randf() * TAU, s,
-					stem_color, BLOOMS[rng.randi() % BLOOMS.size()])
-			elif roll < 0.92:
-				var s := rng.randf_range(0.7, 1.4)
-				_prop(_pick(lib, "rock", rng), Vector3(x, y - s * 0.35, z), rng.randf() * TAU, s,
-					rock_color.darkened(rng.randf() * 0.3))
-			else:
-				var s := rng.randf_range(0.9, 1.5)
-				_prop(_pick(lib, "bush", rng), Vector3(x, y - s * 0.3, z), rng.randf() * TAU, s,
-					bush_color.lerp(LEAF_TONES[rng.randi() % LEAF_TONES.size()], 0.4))
+	for big in [true, false]:
+		for c in clusters:
+			for kind in c.kinds:
+				if (kind in TREES or kind == "log" or kind == "stump") != big:
+					continue
+				var band: Dictionary = c.band
+				var s: float
+				if kind in TREES:
+					s = rng.randf_range(band.tree[0], band.tree[1])
+				elif kind in MODELS:
+					s = rng.randf_range(WOOD_SIZE[0], WOOD_SIZE[1])
+				elif kind == "flower":
+					s = rng.randf_range(FLOWER_SIZE[0], FLOWER_SIZE[1])
+				else:
+					s = rng.randf_range(band.prop[0], band.prop[1])
+				_scatter(terrain, lib, models, rng, c.x, c.z, c.spread, kind, s)
+
+	_fill_gaps(terrain, lib, models, rng, reach)
 
 	# Bank dressing: reeds and wet stones sitting against the channel.
-	for bx in BANKS:
+	var bx := -reach
+	while bx < reach:
+		var at := bx
+		bx += rng.randf_range(24.0, 44.0)
 		for side in [-1.0, 1.0]:
-			var n := rng.randi_range(3, 6)
-			for i in n:
-				var x: float = bx + rng.randf_range(-11.0, 11.0)
-				var z: float = terrain.stream_bank_z(x, side * rng.randf_range(1.05, 1.5))
-				var y: float = terrain.landform_height(x, z)
-				if rng.randf() < 0.55:
-					var s := rng.randf_range(1.3, 2.4)
-					_prop(_pick(lib, "tuft", rng), Vector3(x, y - 0.2, z), rng.randf() * TAU, s,
-						LEAF_TONES[rng.randi() % LEAF_TONES.size()])
-				else:
-					var s := rng.randf_range(0.8, 1.7)
-					_prop(_pick(lib, "rock", rng), Vector3(x, y - s * 0.35, z), rng.randf() * TAU, s,
-						rock_color.darkened(rng.randf() * 0.25))
+			for i in rng.randi_range(3, 7):
+				var x: float = at + rng.randf_range(-12.0, 12.0)
+				var z: float = terrain.stream_bank_z(x, side * rng.randf_range(1.05, 1.55))
+				var kind: String = ["tuft", "tuft", "rock", "log"][rng.randi() % 4]
+				var s: float = rng.randf_range(WOOD_SIZE[0], WOOD_SIZE[1]) if kind == "log" \
+					else rng.randf_range(0.9, 2.1)
+				_scatter(terrain, lib, models, rng, x, z, 3.0, kind, s)
+
+# Nothing may be planted where the ground has run out, in the water, inside a
+# deliberate clearing, or on top of something already there.
+func _spot(terrain: MeshInstance3D, rng: RandomNumberGenerator, cx: float, cz: float,
+		spread: float, kind: String, s: float, tries: int = 4) -> Vector3:
+	var need: float = FOOTPRINT[kind] * s
+	for attempt in tries:
+		var a := rng.randf() * TAU
+		var rad: float = pow(rng.randf(), 0.6) * spread
+		var x: float = cx + cos(a) * rad
+		var z: float = cz + sin(a) * rad * 0.6
+		if z > -8.0 or terrain.stream_distance(x, z) < 1.02:
+			continue
+		if _clear_mask.get_noise_2d(x, z * 2.2) > 0.36:
+			continue
+		if not _ground(terrain, x, z, need):
+			continue
+		if not _free(x, z, need):
+			continue
+		_claim(x, z, need)
+		return Vector3(x, terrain.landform_height(x, z), z)
+	return Vector3(0.0, INF, 0.0)
+
+func _scatter(terrain: MeshInstance3D, lib: Dictionary, models: Dictionary, rng: RandomNumberGenerator,
+		cx: float, cz: float, spread: float, kind: String, s: float, tries: int = 4) -> void:
+	var at := _spot(terrain, rng, cx, cz, spread, kind, s, tries)
+	if at.y == INF:
+		return
+	var yaw := rng.randf() * TAU
+	if kind in MODELS:
+		var set: Array = models[kind]
+		var parts: Array = set[rng.randi() % set.size()]
+		var wood: Color = trunk_color.darkened(snappedf(rng.randf(), 0.34) * 0.22)
+		var sink: float = 0.22 if kind in TREES else 0.5
+		_plant(parts, lib, rng, at, s, yaw, wood, _canopy(rng, kind) if kind in TREES else wood, sink)
+		return
+	match kind:
+		"bush":
+			_prop(_pick(lib, "bush", rng), at - Vector3(0.0, s * 0.28, 0.0), yaw, s,
+				bush_color.lerp(LEAF_TONES[rng.randi() % LEAF_TONES.size()], 0.45))
+		"rock":
+			_prop(_pick(lib, "rock", rng), at - Vector3(0.0, s * 0.3, 0.0), yaw, s,
+				STONE_TONES[rng.randi() % STONE_TONES.size()])
+		"tuft":
+			_prop(_pick(lib, "tuft", rng), at - Vector3(0.0, s * 0.12, 0.0), yaw, s * 0.9,
+				LEAF_TONES[rng.randi() % LEAF_TONES.size()])
+		"flower":
+			_prop(_pick(lib, "flower", rng), at - Vector3(0.0, s * 0.1, 0.0), yaw, s, stem_color,
+				BLOOMS[rng.randi() % BLOOMS.size()])
+
+# Sweep the whole planted region and seed anything that came out bare, so there
+# are no dead patches — except where the clearing mask deliberately opens one.
+func _fill_gaps(terrain: MeshInstance3D, lib: Dictionary, models: Dictionary,
+		rng: RandomNumberGenerator, reach: float) -> void:
+	var step := 16.0
+	var z := -9.0
+	while z > -238.0:
+		var x := -reach
+		while x < reach:
+			var px: float = x + rng.randf_range(-4.0, 4.0)
+			var pz: float = z + rng.randf_range(-4.0, 4.0)
+			x += step
+			if not _free(px, pz, step * 0.42):
+				continue
+			for i in rng.randi_range(2, 4):
+				var roll := rng.randf()
+				var kind := "tuft"
+				if roll > 0.90:
+					kind = "conifer"
+				elif roll > 0.80:
+					kind = "rock"
+				elif roll > 0.56:
+					kind = "flower"
+				var s: float = rng.randf_range(0.8, 1.7)
+				if kind == "conifer":
+					s = rng.randf_range(0.24, 0.38)
+				elif kind == "flower":
+					s = rng.randf_range(FLOWER_SIZE[0], FLOWER_SIZE[1])
+				_scatter(terrain, lib, models, rng, px, pz, 5.0, kind, s, 1)
+		z -= step
+
+# --- occupancy ---------------------------------------------------------------
+# A coarse hash of what is already planted. Cheap enough to ask before every
+# placement, which is what keeps props out of each other.
+const OCC_CELL := 9.0
+
+var _occ: Dictionary = {}
+var _clear_mask := FastNoiseLite.new()
+
+func _key(x: float, z: float) -> Vector2i:
+	return Vector2i(int(floor(x / OCC_CELL)), int(floor(z / OCC_CELL)))
+
+func _free(x: float, z: float, r: float) -> bool:
+	var k := _key(x, z)
+	for dz in [-1, 0, 1]:
+		for dx in [-1, 0, 1]:
+			var cell: Array = _occ.get(Vector2i(k.x + dx, k.y + dz), [])
+			for e in cell:
+				var dxx: float = x - e.x
+				var dzz: float = z - e.y
+				var reach: float = r + e.z
+				if dxx * dxx + dzz * dzz < reach * reach:
+					return false
+	return true
+
+func _claim(x: float, z: float, r: float) -> void:
+	var k := _key(x, z)
+	if not _occ.has(k):
+		_occ[k] = []
+	_occ[k].append(Vector3(x, z, r))
+
+# There has to be generated surface under a prop and all round its footprint, so
+# nothing is planted in the air off the rim where the land has fallen away.
+func _ground(terrain: MeshInstance3D, x: float, z: float, r: float) -> bool:
+	if not terrain.landform_ground(x, z):
+		return false
+	var m: float = maxf(r, 2.5)
+	for o in [Vector2(m, 0.0), Vector2(-m, 0.0), Vector2(0.0, m), Vector2(0.0, -m)]:
+		if not terrain.landform_ground(x + o.x, z + o.y):
+			return false
+	return true
 
 func _variants(count: int, make: Callable, rng: RandomNumberGenerator) -> Array:
 	var out: Array = []
@@ -248,7 +360,7 @@ func _pick(lib: Dictionary, kind: String, rng: RandomNumberGenerator) -> ArrayMe
 	return set[rng.randi() % set.size()]
 
 func _canopy(rng: RandomNumberGenerator, kind: String) -> Color:
-	var base: Color = needle_color if kind == "spruce" else leaf_color
+	var base: Color = needle_color if kind == "spruce" or kind == "conifer" else leaf_color
 	return base.lerp(LEAF_TONES[rng.randi() % LEAF_TONES.size()], 0.35)
 
 func _parts(scene: PackedScene) -> Array:
@@ -268,17 +380,19 @@ func _collect(n: Node, out: Array) -> void:
 
 # A tree is set into the ground with only its foot buried, and the clay it
 # displaced is pushed up round the trunk so it reads as planted, not dropped.
-func _plant(parts: Array, lib: Dictionary, rng: RandomNumberGenerator, at: Vector3, s: float, yaw: float, canopy: Color) -> void:
+# Trunks are simply set into the ground. They used to get a pad of clay pushed
+# up round the foot; it read as a platform the tree was standing on rather than
+# as ground, so the sink alone does the work now.
+func _plant(parts: Array, lib: Dictionary, rng: RandomNumberGenerator, at: Vector3, s: float,
+		yaw: float, wood: Color, canopy: Color, sink: float) -> void:
 	var lean := Basis(Vector3.RIGHT, rng.randf_range(-0.05, 0.05)) * Basis(Vector3.FORWARD, rng.randf_range(-0.05, 0.05))
-	var base := Vector3(at.x, at.y - 0.22 * s, at.z)
+	var base := Vector3(at.x, at.y - sink * s, at.z)
 	for i in parts.size():
 		var mi := MeshInstance3D.new()
 		mi.mesh = parts[i].mesh
 		mi.transform = Transform3D(lean * Basis(Vector3.UP, yaw).scaled(Vector3.ONE * s), base)
-		mi.set_surface_override_material(0, _clay(trunk_color if i == 0 else canopy, s))
+		mi.set_surface_override_material(0, _clay(wood if i == 0 else canopy, s))
 		add_child(mi)
-	_prop(_pick(lib, "mound", rng), Vector3(at.x, at.y - s * 0.25, at.z), rng.randf() * TAU,
-		s * 2.1, _grass())
 
 func _prop(mesh: ArrayMesh, at: Vector3, yaw: float, scale: float, col: Color, tip := Color(0, 0, 0, 0)) -> void:
 	var mi := MeshInstance3D.new()
@@ -295,8 +409,13 @@ func _grass() -> Color:
 
 var _mats: Dictionary = {}
 
+# Scale and tint are snapped before they become a cache key. Left continuous,
+# every prop got its own material — thousands of them, one draw call each, and
+# most of the build time went into making them. The grain difference between
+# neighbouring buckets is invisible.
 func _clay(col: Color, node_scale: float) -> StandardMaterial3D:
-	var key := "%s|%.3f" % [col.to_html(), node_scale]
+	node_scale = snappedf(node_scale, 0.35)
+	var key := "%s|%.2f" % [col.to_html(), node_scale]
 	if _mats.has(key):
 		return _mats[key]
 	var m := StandardMaterial3D.new()

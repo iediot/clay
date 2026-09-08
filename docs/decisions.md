@@ -127,3 +127,127 @@ Implication:
 Keep the library small and the sweeps low-segment. The material cache is keyed by colour and scale
 and deliberately outlives a rebuild, and children are released with `queue_free` so the renderer
 still holds them for the frame.
+
+## The world is sized from the track, not authored at one length
+
+Decision:
+`landform_half_width()` is `size_x * 0.5 + backland_margin`, and every lateral quantity behind the
+track — the fan, the stream's reach, the mountain span, the scenery's cluster counts — is derived
+from it or expressed per unit of length.
+
+Reason:
+The margin is a camera property: it is how much ground has to sit beside the route to fill the
+frame at this FOV and distance. Multiplying it by the track's length would starve a short track and
+waste geometry on a long one; adding it keeps the shoulder constant and grows the world by exactly
+the track's own extra length.
+
+Implication:
+Nothing behind the track may hold an absolute x coordinate. When adding background content, express
+its position against `landform_half_width()` and its count per unit of length, and check the result
+at more than one `size_x` — the framing should not change.
+
+## Mountains are a crest-line height field
+
+Decision:
+The range is one height field. Each mountain is a short crest polyline with a height and flank width
+per node, rasterised with a smooth max and then blurred.
+
+Reason:
+A lathe can only make a body of revolution, which is why the earlier cones read as repeated blobs
+however they were varied. Ridges, saddles and uneven flanks are what make a mountain recognisable,
+and a crest line is the smallest thing that can describe them. The blur is what keeps the result
+plasticine rather than terrain: it rounds every crest into a broad blunt surface without touching
+the large forms.
+
+Implication:
+Detail belongs in the crest line, never in noise added to the field. Snow is derived from the same
+field, so a new silhouette gets conforming snow for free.
+
+## Woody props are remeshed reference models, not built from primitives
+
+Decision:
+Logs, stumps and the extra trees come from the reference forest set, put through the same treatment
+as Tree1/Tree2 — split into loose parts, canopy parts joined, voxel remesh, a small swell, then a
+Smooth relax. `tools/blender/export_clay_props.py` does it and writes the GLBs into `assets/`.
+
+Reason:
+Assembling props out of spheres and swept tubes produced shapes that were too regular and too clean
+to sit next to the hand-made models: perfect forms stuck together, with branches that stopped short
+of the crowns. The reference set carries the shapes; the remesh-and-relax pass is what converts its
+low-poly facets into clay. Matching the recipe was checked by reproducing Tree1's own vertex count
+(44,284 against 44,684 at voxel 0.145).
+
+Implication:
+New woody props go through that script rather than into `ClayShapes`, which now only makes the small
+ground cover — tufts, flowers, bushes, rocks and tree mounds. The relax pass is not optional: remesh
+on its own leaves the source's flat faces intact.
+
+## The landform's rim is keyed to distance past the track, not to a fraction
+
+Decision:
+`ClayBackland._land` rolls the outer rim down by `(|x| - size_x/2) / backland_margin`, never by
+`|u|`, the point's fraction of the fan's width.
+
+Reason:
+As a fraction, the rim treatment reached inward over the outer fifth of the track's own length — at
+size_x 800 it began around x 317 — so the ground alongside a perfectly level track sank away and the
+two read as disconnected even though the mesh was welded. Ground level with the route has to stay
+level with it; only the shoulder past the ends may drop.
+
+Implication:
+Anything shaping the landform against the track's ends belongs in world units measured from the
+track's extent. A fraction of the fan is not the same distance at two different track lengths.
+
+## The sky is unshaded and lights itself
+
+Decision:
+`shaders/clay_sky.gdshader` draws the dome `unshaded`, with its own fixed light direction driving a
+narrow brightness band around one colour.
+
+Reason:
+Lit normally, the dome's lumps and the scene's directional light shaded it across the frame and it
+read as a gradient of several blues — the opposite of one sheet of clay. Unshaded alone would be flat
+and show no deformation at all, so the relief the sky needs is generated here rather than taken from
+the scene, and its range is capped to stay within one colour.
+
+Implication:
+`shade_contrast` is the whole budget for how much the sky may vary; widening it turns the sky into a
+gradient again. The dome's geometric lumps and the fingerprint both read through this term, so raise
+`lump` or `grain_relief` to make deformations stronger rather than raising the contrast.
+
+## Generated meshes are cached on disk between runs
+
+Decision:
+`scripts/mesh_cache.gd` stores the terrain's built `ArrayMesh` under `user://mesh_cache`, keyed on
+every stored parameter of the node plus a digest of the scripts that build it. The scene files stay
+clean; nothing is serialised into them.
+
+Reason:
+At the lengths this track is now used at, generation was most of the project's start-up: half a
+million vertices built in GDScript on every launch. None of it changes unless a parameter or the
+generating code does, so it does not need rebuilding.
+
+Implication:
+`SOURCES` on the generator lists the scripts whose contents affect the mesh — a new script that
+participates in building it must be added there, or the cache will serve a stale mesh. Editing any
+listed script invalidates every entry on its own, so there is no version number to bump. The
+collision shape is deliberately *not* cached: rebuilding it costs about the same as loading it and
+saves half the cache's size.
+
+## Surfaces are handed over as arrays, with tangents worked out rather than generated
+
+Decision:
+The generators build `ARRAY_VERTEX`/`NORMAL`/`TANGENT`/`TEX_UV` themselves and call
+`add_surface_from_arrays`, instead of feeding `SurfaceTool` a vertex at a time and calling
+`generate_tangents`.
+
+Reason:
+`generate_tangents` was the single largest cost in building the slab, and on the dirt it was
+pathological — the floor fan shares one centre vertex with all of its triangles, so 12k vertices cost
+more to tangent than the grass's 210k. The work is unnecessary: these UVs are flat projections along
+a known axis, so the tangent frame follows from that axis directly.
+
+Implication:
+A surface added with a new UV scheme needs its U/V world directions added to `_uv_basis`. Surfaces
+that carry no unwrap at all — the mountains, the sky — get a stable frame off the normal instead,
+which is all their triplanar and world-space shaders need.

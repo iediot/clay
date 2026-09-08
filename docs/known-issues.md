@@ -35,3 +35,25 @@ at the cost of shifting the fingerprint's phase on the default's side walls.
 size_x 300 the track is wider than the landform behind it, so the landform stops fanning and its
 rolled rim comes into frame beside the track's ends. The stream is likewise pinned to |x| < 168.
 Both are scenery, not the track, and neither shows at the approved default.
+
+## Marching-squares winding, for anything hung off a contour
+
+The snow's contour cells do not all come out wound the same way, so a quad hung below the contour
+cannot trust the order its endpoints arrive in — `_face_quad` turns each one to face out and down
+the slope instead. Two related traps, both of which produced visible artefacts before being fixed:
+a drip whose foot sits exactly on the rock z-fights it into stripes along the snowline, so the foot
+is held a fraction above; and anything derived from the *cell* (its centre, its edge midpoint)
+differs between the two cells sharing a contour segment, which breaks the skirt into a comb of loose
+ribbons — every property of the lip has to be a function of the contour point alone.
+
+## A weld can still be see-through even when it is welded
+
+The landform shares the track's rear edge vertex for vertex, yet the world was see-through along a
+hairline there: a ray that grazes the shared edge passes just under the landform and then out
+through the track's rear drips, which face away from the camera and are culled. Nothing is torn — the
+wedge beneath the join simply had no front face. `ClayBackland._collar` gives it one.
+
+Worth knowing because the usual checks all pass: a top-down render shows a solid slab, and an
+open-edge count finds no holes. What finds it is rendering the gameplay camera against a magenta
+background and counting magenta pixels below the horizon, which is cheap enough to keep doing after
+any change to the seam.
