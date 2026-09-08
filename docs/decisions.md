@@ -198,6 +198,40 @@ Implication:
 Anything shaping the landform against the track's ends belongs in world units measured from the
 track's extent. A fraction of the fan is not the same distance at two different track lengths.
 
+## The sky is a sheet held in front of the camera, not a shell round the world
+
+Decision:
+`clay_sky.gd` builds a deformed plane, and its anchor parks it straight ahead of the camera each
+frame with the camera's own orientation.
+
+Reason:
+A dome was 7k vertices of sphere to show one colour, and every part of it was seen at a different
+angle. A plane parallel to the image plane shows the same colour from 3k vertices, its thumbed lumps
+read the same everywhere because the whole sheet is square-on to the view, and being locked to the
+camera it needs no parallax handling at all.
+
+Implication:
+The sheet's grain is sampled in local space, not world space — carried in front of the camera, a
+world-space lookup would drag the grain across it as the player moves. Its `custom_aabb` is
+deliberately generous because it is repositioned every frame and must not be culled by stale bounds.
+
+## Anything flat in a corner of the frame is aligned to the image plane, and kept thin
+
+Decision:
+`backdrop_anchor.gd`'s `face_camera` copies the camera's basis rather than turning to look at the
+camera's position, and the sun model is scaled thin along its own depth.
+
+Reason:
+Aimed at the camera's position, a flat object sits square to the view *ray*, and the projection then
+stretches it into an ellipse the further it is from the centre of a wide frame. Parallel to the image
+plane it projects to the same shape wherever it sits — but only if it is genuinely flat: the sun is a
+lens two units deep, and seen fifty degrees off-axis that depth alone squashed its silhouette. Both
+had to be fixed; either on its own still leaves an ellipse.
+
+Implication:
+A new backdrop piece meant to hold a fixed shape on screen needs both — the camera's basis, and
+enough flatness that its own depth does not foreshorten.
+
 ## The sky is unshaded and lights itself
 
 Decision:

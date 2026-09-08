@@ -9,18 +9,14 @@
 
 [node name="SkyAnchor" type="Node3D" parent="." unique_id=977840817]
 script = ExtResource("1_anchor")
+lock_to_view = true
 
-[node name="SkyDome" type="MeshInstance3D" parent="SkyAnchor" unique_id=14898895]
+[node name="SkyPlane" type="MeshInstance3D" parent="SkyAnchor" unique_id=14898895]
 script = ExtResource("2_sky")
-lump = 0.075
-lump_scale = 2.6
 sky_color = Color(0.17, 0.56, 0.88, 1)
-grain = 300.0
-shade_contrast = 0.17
-grain_relief = 1.2
 
 [node name="SunAnchor" type="Node3D" parent="." unique_id=1753866035]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 523.94, 139.86, -499.74)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 492.87, 109.84, -491.7)
 script = ExtResource("1_anchor")
 follow = 0.94
 face_camera = true
@@ -31,4 +27,4 @@ grain = 9.0
 relief = 15.0
 
 [node name="SunModel" parent="SunAnchor/Sun" unique_id=940028333 instance=ExtResource("4_sun")]
-transform = Transform3D(12, 0, 0, 0, 12, 0, 0, 0, 12, 0, 0, 0)
+transform = Transform3D(12, 0, 0, 0, 12, 0, 0, 0, 2.3, 0, 0, 0)
